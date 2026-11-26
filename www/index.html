@@ -96,10 +96,17 @@ const saveCfg=()=>{try{localStorage.setItem('cf-cfg',JSON.stringify(cfg))}catch(
 let zonas=[],fotos=[],view={v:'home'};const urls=new Map();
 const url=f=>{if(!urls.has(f.id))urls.set(f.id,URL.createObjectURL(f.blob));return urls.get(f.id)};
 const zona=id=>zonas.find(z=>z.id===id);
-const pLabel=n=>'P-'+n;
+const pLabel=(z,n)=>{const p=z.predios.find(x=>x.n===n);return p&&p.cod?p.cod:'P-'+n};
+const pNum=(z,p)=>{const m=String(pLabel(z,p.n)).match(/(\d+)\s*$/);return m?+m[1]:p.n};
+const ordenar=z=>z.predios.sort((a,b)=>pNum(z,a)-pNum(z,b)||a.n-b.n);
+const etiqueta=v=>{v=clean(v).toUpperCase();return /^\d+$/.test(v)?'P-'+v:v};
+const existe=(z,lab,salvo)=>z.predios.some(p=>p.n!==salvo&&pLabel(z,p.n).toUpperCase()===lab.toUpperCase());
+const nuevoPredio=(z,lab)=>{const n=Math.max(0,...z.predios.map(p=>p.n))+1;const p={n,nota:''};if(lab&&lab!=='P-'+n)p.cod=lab;z.predios.push(p);return p};
+const sigNum=z=>Math.max(0,...z.predios.map(p=>pNum(z,p)))+1;
+const lista=t=>{const out=[];for(const part of String(t).split(/[,;\s]+/)){const r=part.match(/^(\d+)-(\d+)$/);if(r){let a=+r[1],b=+r[2];if(b<a)[a,b]=[b,a];for(let i=a;i<=b&&out.length<1000;i++)out.push(i)}else if(/^\d+$/.test(part))out.push(+part)}return out};
 const fotosDe=(zid,n)=>fotos.filter(f=>f.zona===zid&&(n==null||f.predio===n)).sort((a,b)=>a.seq-b.seq);
 /* nombre: una sola foto -> "MZ-3 P-1.jpg"; varias -> "MZ-3 P-1_1.jpg", "MZ-3 P-1_2.jpg" */
-const nombres=(z,n)=>{const l=fotosDe(z.id,n);const base=clean(z.nombre+' '+pLabel(n));return l.map((f,i)=>({f,name:base+(l.length>1?'_'+(i+1):'')+'.'+(f.ext||'jpg')}))};
+const nombres=(z,n)=>{const l=fotosDe(z.id,n);const base=clean(z.nombre+' '+pLabel(z,n));return l.map((f,i)=>({f,name:base+(l.length>1?'_'+(i+1):'')+'.'+(f.ext||'jpg')}))};
 const toast=m=>{const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.append(t);setTimeout(()=>t.remove(),2600)};
 
 /* ---------- diálogos propios ---------- */
@@ -114,13 +121,15 @@ function nuevaZona(){
  <label class="fld" for="nt">Tipo</label><select id="nt">${Object.entries(TIPOS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>
  <label class="fld" for="nc">Número o nombre</label><input type="text" id="nc" placeholder="Ej. 3 o El Guamo" autocomplete="off">
  <label class="fld" for="nn">¿Cuántos predios tiene?</label><input type="number" id="nn" min="0" max="999" value="10" inputmode="numeric">
- <p class="hint">Si no sabe, deje un número aproximado: puede agregar más después.</p>
+ <label class="fld" for="nl">O escriba sus números (opcional)</label><input type="text" id="nl" placeholder="Ej. 1-3, 9, 12" autocomplete="off" inputmode="numeric">
+ <p class="hint">Si los predios no van seguidos, escríbalos aquí. Puede agregar o cambiar números después.</p>
  <div class="prev" id="np">MZ-</div>
  <div class="row"><button class="btn" data-x>Cancelar</button><button class="btn pri" data-ok>Crear carpeta</button></div>`,async ov=>{
   const nombre=prev(ov);const n=Math.max(0,Math.min(999,parseInt(ov.querySelector('#nn').value)||0));
   if(!ov.querySelector('#nc').value.trim()){ov.querySelector('#nc').focus();return false}
   if(zonas.some(z=>z.nombre.toUpperCase()===nombre.toUpperCase())){toast('Ya existe la carpeta '+nombre);return false}
-  const z={id:uid(),tipo:ov.querySelector('#nt').value,nombre,predios:Array.from({length:n},(_,i)=>({n:i+1,nota:''})),creada:Date.now()};
+  const z={id:uid(),tipo:ov.querySelector('#nt').value,nombre,predios:[],creada:Date.now()};
+  const nums=lista(ov.querySelector('#nl').value);if(nums.length){for(const x of [...new Set(nums)].sort((a,b)=>a-b))nuevoPredio(z,'P-'+x)}else for(let i=1;i<=n;i++)nuevoPredio(z,'P-'+i);
   zonas.push(z);await put('zonas',z);go({v:'zona',id:z.id})});
  const prev=ov=>{const t=ov.querySelector('#nt').value,c=clean(ov.querySelector('#nc').value).toUpperCase();const s=t==='X'?c:t+'-'+c;ov.querySelector('#np').textContent=s||'—';return s};
  ov.addEventListener('input',()=>prev(ov));prev(ov)}
@@ -138,7 +147,7 @@ async function agregar(files,z,n){
  if(!files.length)return;toast('Guardando '+files.length+' foto(s)…');const pos=await gps();
  let seq=Math.max(0,...fotosDe(z.id,n).map(f=>f.seq));
  for(const file of files){let blob=file,ext=/png/.test(file.type)?'png':/heic|heif/.test(file.type)?'heic':'jpg';const fecha=Date.now();
-  if(cfg.sello){const d=new Date(fecha).toLocaleString('es-CO');blob=await sellar(file,z.nombre+' '+pLabel(n)+'\n'+d+(pos?`\n${pos.lat.toFixed(6)}, ${pos.lon.toFixed(6)}`:''));if(blob!==file)ext='jpg'}
+  if(cfg.sello){const d=new Date(fecha).toLocaleString('es-CO');blob=await sellar(file,z.nombre+' '+pLabel(z,n)+'\n'+d+(pos?`\n${pos.lat.toFixed(6)}, ${pos.lon.toFixed(6)}`:''));if(blob!==file)ext='jpg'}
   const f={id:uid(),zona:z.id,predio:n,seq:++seq,blob,ext,fecha,lat:pos?.lat??null,lon:pos?.lon??null};
   try{await put('fotos',f);fotos.push(f)}catch(e){toast('No se pudo guardar: memoria llena');break}}
  render()}
@@ -158,9 +167,9 @@ async function zip(items){const enc=new TextEncoder(),parts=[],cen=[];let off=0;
  e.setUint32(0,0x06054b50,true);e.setUint16(8,items.length,true);e.setUint16(10,items.length,true);e.setUint32(12,cs,true);e.setUint32(16,off,true);
  return new Blob([...parts,...cen,e.buffer],{type:'application/zip'})}
 function itemsZona(z){const out=[],rows=[['Carpeta','Predio','Nota / código predial','Archivo','Fecha','Latitud','Longitud']];const root=clean(z.nombre);
- for(const p of z.predios){const ns=nombres(z,p.n);const dir=cfg.sub?root+'/'+pLabel(p.n)+'/':root+'/';
-  ns.forEach(({f,name})=>{out.push({path:dir+name,data:f.blob,date:f.fecha});rows.push([z.nombre,pLabel(p.n),p.nota,name,new Date(f.fecha).toLocaleString('es-CO'),f.lat??'',f.lon??''])});
-  if(!ns.length)rows.push([z.nombre,pLabel(p.n),p.nota,'(sin fotos)','','',''])}
+ for(const p of z.predios){const ns=nombres(z,p.n);const dir=cfg.sub?root+'/'+pLabel(z,p.n)+'/':root+'/';
+  ns.forEach(({f,name})=>{out.push({path:dir+name,data:f.blob,date:f.fecha});rows.push([z.nombre,pLabel(z,p.n),p.nota,name,new Date(f.fecha).toLocaleString('es-CO'),f.lat??'',f.lon??''])});
+  if(!ns.length)rows.push([z.nombre,pLabel(z,p.n),p.nota,'(sin fotos)','','',''])}
  out.push({path:root+'/resumen_'+root+'.csv',data:'﻿'+rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(';')).join('\r\n')});return out}
 const CAP=window.Capacitor,NATIVO=!!(CAP&&CAP.isNativePlatform&&CAP.isNativePlatform());
 const plug=n=>(CAP.Plugins&&CAP.Plugins[n])||CAP.registerPlugin(n);
@@ -209,31 +218,45 @@ function home(app,nav){$('#ttl').textContent='Cerón Fotos Prediales';
 function vZona(app,nav,z){$('#ttl').textContent=z.nombre;const con=z.predios.filter(p=>fotosDe(z.id,p.n).length).length;
  app.innerHTML=`<h1>${esc(z.nombre)}</h1><p class="sub">${z.predios.length} predios · ${con} con foto · ${fotosDe(z.id).length} fotos. Toque un predio para fotografiarlo.</p>
  <div class="meter" style="margin-bottom:16px"><i style="width:${z.predios.length?Math.round(con/z.predios.length*100):0}%"></i></div>
- <div class="grid">${z.predios.map(p=>{const l=fotosDe(z.id,p.n);return `<button class="p ${l.length?'ok':''}" data-n="${p.n}" aria-label="${esc(pLabel(p.n))}, ${l.length} fotos" ${l.length?`style="background-image:url('${url(l[l.length-1])}')"`:''}><span>${esc(pLabel(p.n))}</span>${l.length?`<em>${l.length}</em>`:''}</button>`}).join('')}</div>
+ <div class="grid">${z.predios.map(p=>{const l=fotosDe(z.id,p.n);return `<button class="p ${l.length?'ok':''}" data-n="${p.n}" aria-label="${esc(pLabel(z,p.n))}, ${l.length} fotos" ${l.length?`style="background-image:url('${url(l[l.length-1])}')"`:''}><span>${esc(pLabel(z,p.n))}</span>${l.length?`<em>${l.length}</em>`:''}</button>`}).join('')}</div>
  <div class="row"><button class="btn" id="ap">+ Agregar predios</button><button class="btn" id="ex">Exportar ZIP</button><button class="btn warn" id="dz">Eliminar carpeta</button></div>`;
  const sig=z.predios.find(p=>!fotosDe(z.id,p.n).length);
- nav.innerHTML=`<div class="nav"><button class="btn pri" id="go">${sig?'Fotografiar '+esc(pLabel(sig.n)):'Todos los predios tienen foto'}</button></div>`;
+ nav.innerHTML=`<div class="nav"><button class="btn pri" id="go">${sig?'Fotografiar '+esc(pLabel(z,sig.n)):'Todos los predios tienen foto'}</button></div>`;
  $('#go').disabled=!sig;if(sig)$('#go').onclick=()=>go({v:'predio',id:z.id,n:sig.n});
  app.querySelectorAll('[data-n]').forEach(b=>b.onclick=()=>go({v:'predio',id:z.id,n:+b.dataset.n}));
  $('#ex').onclick=()=>exportar([z],z.nombre);
- $('#ap').onclick=()=>dialog('<h2>Agregar predios</h2><label class="fld" for="ac">¿Cuántos más?</label><input type="number" id="ac" value="1" min="1" max="500" inputmode="numeric"><div class="row"><button class="btn" data-x>Cancelar</button><button class="btn pri" data-ok>Agregar</button></div>',async ov=>{
-  const k=Math.max(1,Math.min(500,parseInt(ov.querySelector('#ac').value)||1));const m=Math.max(0,...z.predios.map(p=>p.n));for(let i=1;i<=k;i++)z.predios.push({n:m+i,nota:''});await put('zonas',z);render()});
+ $('#ap').onclick=()=>dialog(`<h2>Agregar predios</h2><label class="fld" for="al">Números de los predios</label><input type="text" id="al" placeholder="Ej. 9, 12, 15-18" autocomplete="off" inputmode="numeric">
+ <p class="hint">Use comas y guiones para rangos. Si lo deja vacío, se agregan en orden desde P-${sigNum(z)}.</p>
+ <label class="fld" for="ac">Cantidad (si no escribió números)</label><input type="number" id="ac" value="1" min="1" max="500" inputmode="numeric">
+ <div class="row"><button class="btn" data-x>Cancelar</button><button class="btn pri" data-ok>Agregar</button></div>`,async ov=>{
+  let nums=lista(ov.querySelector('#al').value);if(!nums.length){const k=Math.max(1,Math.min(500,parseInt(ov.querySelector('#ac').value)||1)),s0=sigNum(z);nums=Array.from({length:k},(_,i)=>s0+i)}
+  let rep=0;for(const x of nums){const lab='P-'+x;if(existe(z,lab))rep++;else nuevoPredio(z,lab)}
+  ordenar(z);await put('zonas',z);render();if(rep)toast(rep+' predio(s) ya existían y no se repitieron')});
  $('#dz').onclick=()=>confirmar(`¿Eliminar ${z.nombre} y sus ${fotosDe(z.id).length} fotos? No se puede deshacer.`,'Eliminar',async()=>{
   for(const f of fotosDe(z.id)){await del('fotos',f.id);URL.revokeObjectURL(urls.get(f.id)||'');urls.delete(f.id)}fotos=fotos.filter(f=>f.zona!==z.id);zonas=zonas.filter(x=>x!==z);await del('zonas',z.id);go({v:'home'})})}
 
+function renombrar(z,p){const ov=dialog(`<h2>Cambiar número del predio</h2><p class="hint">Escriba solo el número (ej. 9 → P-9) o el nombre completo. Las fotos de este predio tomarán el nuevo nombre al exportar.</p>
+ <label class="fld" for="rv">Número o nombre</label><input type="text" id="rv" value="${esc(pLabel(z,p.n))}" autocomplete="off"><div class="prev" id="rp"></div>
+ <div class="row"><button class="btn" data-x>Cancelar</button><button class="btn pri" data-ok>Guardar</button></div>`,async ov=>{
+  const lab=etiqueta(ov.querySelector('#rv').value);if(!lab){ov.querySelector('#rv').focus();return false}
+  if(existe(z,lab,p.n)){toast('Ya existe '+lab+' en '+z.nombre);return false}
+  if(lab==='P-'+p.n)delete p.cod;else p.cod=lab;ordenar(z);await put('zonas',z);render()});
+ const upd=()=>{ov.querySelector('#rp').textContent=z.nombre+' '+(etiqueta(ov.querySelector('#rv').value)||'—')};ov.addEventListener('input',upd);upd();ov.querySelector('#rv').select()}
+
 function vPredio(app,nav,z,n){const p=z.predios.find(x=>x.n===n);if(!p)return go({v:'zona',id:z.id});const ns=nombres(z,n);
- $('#ttl').textContent=z.nombre+' · '+pLabel(n);
- app.innerHTML=`<h1>${esc(z.nombre)} ${esc(pLabel(n))}</h1><p class="sub">${ns.length?ns.length+' foto(s) en este predio.':'Sin fotos todavía.'}</p>
+ $('#ttl').textContent=z.nombre+' · '+pLabel(z,n);
+ app.innerHTML=`<h1>${esc(z.nombre)} ${esc(pLabel(z,n))}</h1><button class="btn" id="rn" style="min-height:40px;margin-bottom:8px">✎ Cambiar número del predio</button><p class="sub">${ns.length?ns.length+' foto(s) en este predio.':'Sin fotos todavía.'}</p>
  <label class="btn pri big" for="cam">📷 Tomar foto</label><input type="file" id="cam" accept="image/*" capture="environment">
  <div class="row"><label class="btn" for="gal">Subir desde la galería</label><input type="file" id="gal" accept="image/*" multiple></div>
  <label class="fld" for="nota">Nota o número predial (opcional)</label><input type="text" id="nota" value="${esc(p.nota)}" placeholder="Ej. 18753010000030001000 · casa esquinera">
  <div class="fotos">${ns.map(({f,name})=>`<div class="f"><img src="${url(f)}" alt="${esc(name)}" loading="lazy"><div><span>${esc(name)}</span><button data-d="${esc(f.id)}" aria-label="Borrar ${esc(name)}">✕</button></div></div>`).join('')}</div>`;
  const i=z.predios.indexOf(p),ant=z.predios[i-1],sig=z.predios[i+1];
- nav.innerHTML=`<div class="nav"><button class="btn" id="pa" ${ant?'':'disabled'}>← ${ant?esc(pLabel(ant.n)):'—'}</button><button class="btn pri" id="ps">${sig?esc(pLabel(sig.n))+' →':'+ Nuevo '+esc(pLabel(n+1))}</button></div>`;
+ nav.innerHTML=`<div class="nav"><button class="btn" id="pa" ${ant?'':'disabled'}>← ${ant?esc(pLabel(z,ant.n)):'—'}</button><button class="btn pri" id="ps">${sig?esc(pLabel(z,sig.n))+' →':'+ Nuevo P-'+sigNum(z)}</button></div>`;
  $('#cam').onchange=e=>agregar([...e.target.files],z,n);$('#gal').onchange=e=>agregar([...e.target.files],z,n);
  $('#nota').onchange=async e=>{p.nota=e.target.value.trim();await put('zonas',z)};
  if(ant)$('#pa').onclick=()=>go({v:'predio',id:z.id,n:ant.n});
- $('#ps').onclick=async()=>{if(!sig){const m=Math.max(...z.predios.map(x=>x.n));z.predios.push({n:m+1,nota:''});await put('zonas',z);return go({v:'predio',id:z.id,n:m+1})}go({v:'predio',id:z.id,n:sig.n})};
+ $('#ps').onclick=async()=>{if(!sig){const np=nuevoPredio(z,'P-'+sigNum(z));await put('zonas',z);return go({v:'predio',id:z.id,n:np.n})}go({v:'predio',id:z.id,n:sig.n})};
+ $('#rn').onclick=()=>renombrar(z,p);
  app.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>confirmar('¿Borrar esta foto?','Borrar',async()=>{const id=b.dataset.d;await del('fotos',id);fotos=fotos.filter(f=>f.id!==id);URL.revokeObjectURL(urls.get(id)||'');urls.delete(id);render()}))}
 
 if(!NATIVO&&location.protocol==='https:'&&'serviceWorker'in navigator){try{navigator.serviceWorker.register('sw.js').catch(()=>{})}catch(e){}}

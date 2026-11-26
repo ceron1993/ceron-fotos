@@ -66,6 +66,15 @@ input[type=text],input[type=number],select{width:100%;min-height:48px;font:16px 
 .toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--bar);color:#fbfbf2;padding:10px 16px;border-radius:12px;z-index:30;font-weight:600;max-width:92vw;text-align:center}
 .hint{font-size:13px;color:var(--soft)}
 input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
+.camv{position:fixed;inset:0;z-index:40;background:#000;display:flex;flex-direction:column;color:#fff}
+.camv video{flex:1;min-height:0;width:100%;object-fit:contain;background:#000;transition:opacity .12s}
+.camv.flash video{opacity:.25}
+.camtop{position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;gap:10px;padding:14px 16px;background:linear-gradient(#000b,#0000);font-weight:800}
+.cambar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px calc(16px + env(safe-area-inset-bottom));background:#000}
+.cambar .btn{color:#fff;border-color:#fff;min-width:96px}
+.shut{width:80px;height:80px;border-radius:50%;border:6px solid #fff;background:var(--mag);cursor:pointer;flex:none}
+.shut:active{transform:scale(.92)}.shut:disabled{opacity:.5}
+.cth{width:96px;display:flex;justify-content:flex-end}.cth img{width:58px;height:58px;object-fit:cover;border-radius:10px;border:2px solid #fff}
 @media(prefers-reduced-motion:no-preference){.p.ok{animation:pop .3s}@keyframes pop{from{transform:scale(.92)}}}
 </style>
 </head>
@@ -192,7 +201,7 @@ async function exportar(lista,filename){const items=lista.flatMap(itemsZona);if(
  toast('Armando el ZIP…');await guardar(await zip(items),clean(filename)+'.zip')}
 
 /* ---------- vistas ---------- */
-function go(v){view=v;render();scrollTo(0,0)}
+function go(v){view=v;try{localStorage.setItem('cf-view',JSON.stringify(v))}catch(e){}render();scrollTo(0,0)}
 $('#back').addEventListener('click',()=>view.v==='predio'?go({v:'zona',id:view.id}):go({v:'home'}));
 function render(){const app=$('#app'),nav=$('#nav');nav.innerHTML='';$('#back').hidden=view.v==='home';
  if(view.v==='home')return home(app,nav);const z=zona(view.id);if(!z)return go({v:'home'});
@@ -235,6 +244,26 @@ function vZona(app,nav,z){$('#ttl').textContent=z.nombre;const con=z.predios.fil
  $('#dz').onclick=()=>confirmar(`¿Eliminar ${z.nombre} y sus ${fotosDe(z.id).length} fotos? No se puede deshacer.`,'Eliminar',async()=>{
   for(const f of fotosDe(z.id)){await del('fotos',f.id);URL.revokeObjectURL(urls.get(f.id)||'');urls.delete(f.id)}fotos=fotos.filter(f=>f.zona!==z.id);zonas=zonas.filter(x=>x!==z);await del('zonas',z.id);go({v:'home'})})}
 
+let stream=null;
+async function capturar(v){const tr=stream&&stream.getVideoTracks()[0];
+ if(tr&&window.ImageCapture){try{const b=await new ImageCapture(tr).takePhoto();if(b&&b.size){if(b.type==='image/jpeg')return b;const bm=await createImageBitmap(b),c2=document.createElement('canvas');c2.width=bm.width;c2.height=bm.height;c2.getContext('2d').drawImage(bm,0,0);const j=await new Promise(r=>c2.toBlob(r,'image/jpeg',.92));if(j)return j}}catch(e){}}
+ const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);
+ return await new Promise(r=>c.toBlob(r,'image/jpeg',.92))}
+async function abrirCamara(z,n){
+ const respaldo=m=>{if(m)toast(m);$('#cam')&&$('#cam').click()};
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)return respaldo('');
+ try{stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:4096},height:{ideal:3072}}})}
+ catch(e){return respaldo('No se pudo abrir la cámara interna; se usa la del celular')}
+ const ov=document.createElement('div');ov.className='camv';
+ ov.innerHTML=`<video playsinline muted autoplay></video><div class="camtop"><span>${esc(z.nombre+' '+pLabel(z,n))}</span><span id="cc"></span></div>
+ <div class="cambar"><button class="btn" id="cx">✓ Listo</button><button class="shut" id="cs" aria-label="Tomar foto"></button><div class="cth" id="ct"></div></div>`;
+ document.body.append(ov);const v=ov.querySelector('video');v.srcObject=stream;try{await v.play()}catch(e){}
+ const pinta=()=>{const l=fotosDe(z.id,n);ov.querySelector('#cc').textContent=l.length+' foto(s)';ov.querySelector('#ct').innerHTML=l.length?`<img src="${url(l[l.length-1])}" alt="">`:''};pinta();
+ const cerrar=()=>{if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;ov.remove();render()};
+ ov.querySelector('#cx').onclick=cerrar;
+ const cs=ov.querySelector('#cs');cs.onclick=async()=>{if(cs.disabled||!v.videoWidth)return;cs.disabled=true;ov.classList.add('flash');setTimeout(()=>ov.classList.remove('flash'),140);
+  try{const b=await capturar(v);if(b)await agregar([b],z,n);pinta()}catch(e){toast('No se pudo tomar la foto')}finally{cs.disabled=false}}}
+
 function renombrar(z,p){const ov=dialog(`<h2>Cambiar número del predio</h2><p class="hint">Escriba solo el número (ej. 9 → P-9) o el nombre completo. Las fotos de este predio tomarán el nuevo nombre al exportar.</p>
  <label class="fld" for="rv">Número o nombre</label><input type="text" id="rv" value="${esc(pLabel(z,p.n))}" autocomplete="off"><div class="prev" id="rp"></div>
  <div class="row"><button class="btn" data-x>Cancelar</button><button class="btn pri" data-ok>Guardar</button></div>`,async ov=>{
@@ -246,13 +275,13 @@ function renombrar(z,p){const ov=dialog(`<h2>Cambiar número del predio</h2><p c
 function vPredio(app,nav,z,n){const p=z.predios.find(x=>x.n===n);if(!p)return go({v:'zona',id:z.id});const ns=nombres(z,n);
  $('#ttl').textContent=z.nombre+' · '+pLabel(z,n);
  app.innerHTML=`<h1>${esc(z.nombre)} ${esc(pLabel(z,n))}</h1><button class="btn" id="rn" style="min-height:40px;margin-bottom:8px">✎ Cambiar número del predio</button><p class="sub">${ns.length?ns.length+' foto(s) en este predio.':'Sin fotos todavía.'}</p>
- <label class="btn pri big" for="cam">📷 Tomar foto</label><input type="file" id="cam" accept="image/*" capture="environment">
- <div class="row"><label class="btn" for="gal">Subir desde la galería</label><input type="file" id="gal" accept="image/*" multiple></div>
+ <button class="btn pri big" id="tf">📷 Tomar fotos</button>
+ <div class="row"><label class="btn" for="cam">Cámara del celular</label><input type="file" id="cam" accept="image/*" capture="environment"><label class="btn" for="gal">Subir desde la galería</label><input type="file" id="gal" accept="image/*" multiple></div>
  <label class="fld" for="nota">Nota o número predial (opcional)</label><input type="text" id="nota" value="${esc(p.nota)}" placeholder="Ej. 18753010000030001000 · casa esquinera">
  <div class="fotos">${ns.map(({f,name})=>`<div class="f"><img src="${url(f)}" alt="${esc(name)}" loading="lazy"><div><span>${esc(name)}</span><button data-d="${esc(f.id)}" aria-label="Borrar ${esc(name)}">✕</button></div></div>`).join('')}</div>`;
  const i=z.predios.indexOf(p),ant=z.predios[i-1],sig=z.predios[i+1];
  nav.innerHTML=`<div class="nav"><button class="btn" id="pa" ${ant?'':'disabled'}>← ${ant?esc(pLabel(z,ant.n)):'—'}</button><button class="btn pri" id="ps">${sig?esc(pLabel(z,sig.n))+' →':'+ Nuevo P-'+sigNum(z)}</button></div>`;
- $('#cam').onchange=e=>agregar([...e.target.files],z,n);$('#gal').onchange=e=>agregar([...e.target.files],z,n);
+ $('#tf').onclick=()=>abrirCamara(z,n);$('#cam').onchange=e=>agregar([...e.target.files],z,n);$('#gal').onchange=e=>agregar([...e.target.files],z,n);
  $('#nota').onchange=async e=>{p.nota=e.target.value.trim();await put('zonas',z)};
  if(ant)$('#pa').onclick=()=>go({v:'predio',id:z.id,n:ant.n});
  $('#ps').onclick=async()=>{if(!sig){const np=nuevoPredio(z,'P-'+sigNum(z));await put('zonas',z);return go({v:'predio',id:z.id,n:np.n})}go({v:'predio',id:z.id,n:sig.n})};
@@ -261,7 +290,8 @@ function vPredio(app,nav,z,n){const p=z.predios.find(x=>x.n===n);if(!p)return go
 
 if(!NATIVO&&location.protocol==='https:'&&'serviceWorker'in navigator){try{navigator.serviceWorker.register('sw.js').catch(()=>{})}catch(e){}}
 (async()=>{idb=await openDB();try{navigator.storage?.persist?.()}catch(e){}
- try{zonas=await all('zonas');fotos=await all('fotos')}catch(e){idb=null}render()})();
+ try{zonas=await all('zonas');fotos=await all('fotos')}catch(e){idb=null}
+ try{const v=JSON.parse(localStorage.getItem('cf-view')||'null');if(v&&zona(v.id))view=v}catch(e){}render()})();
 }
 </script>
 </body>
